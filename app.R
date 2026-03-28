@@ -6,6 +6,12 @@ library(glue)
 library(shinythemes)
 library(bslib)
 
+# App login
+library(sodium)
+library(shinymanager)
+
+
+
 # ------------------ Precompute base data / graphs -----------------------------
 # Create color palette
 # Find colors
@@ -338,168 +344,189 @@ women_plot <- plot_ly(norms_wider, x = ~ages, y = ~pct100, type = 'scatter', mod
                     margin = list(r = 125)  # Add extra right margin for outside labels
                )
 
-# --- Define UI ---------------------------------------------------------
-ui <- fluidPage(
+
+
+# ------------------ Make our app a function -----------------------------
+DunedinPACE_app <- function(...){
+     # ----------- SUBMODULES-------------
+     source("R/app_login.R")
+
+     # ----------- SOURCE SECURE UI BEHIND LOGON-------------
+     # UI Definition
+     ui_defined <- fluidPage(
           theme = shinytheme("sandstone"),
           titlePanel("DunedinPACE Normed Scores"),
           
           sidebarLayout(
-               sidebarPanel(
+                sidebarPanel(
                     selectInput("sex_choice", "Select norming group:",
-                                 choices = c("---Choose One---", "Women", "Men", "Women and Men")),
+                                  choices = c("---Choose One---", "Women", "Men", "Women and Men")),
                     numericInput("age",   "Enter your age (years):",       value = 45, min = 18, max = 99),
                     numericInput("score", "Enter your DunedinPACE score:", value = 1.00, step = 0.01),
+                    p("This calculator was designed to norm DunedinPACE values derived from blood samples."),
                     actionButton("go",    "Calculate Percentile")
-               ),
-               
-          mainPanel(
-               plotlyOutput("norm_plot", height = "500px"),
-               br(),
-               div(
-                    style = "font-size: 18px; line-height: 1.4;",
-                    textOutput("percentile_text")
-               )
-          )
-     )
-)
- 
-# ----------- Define server logic ----------------------------------------------
-server <- function(input, output, session) {
-     
-     # -------------  Calculated State Flag --------------
-     calculated <- reactiveVal(FALSE)
-     
-     # -------------- Arm the state on button click ---------
-     observeEvent(input$go, {
-          req(input$sex_choice != "---Choose One---")
-          calculated(TRUE)
-     })
-     
-     # ------------- Reset whenever inputs change ------------------
-     observeEvent(input$sex_choice, {
-          calculated(FALSE)
-          }, 
-          ignoreInit = TRUE)
-  
-     # -------------  Compute percentile -----------------
-     calc_percentile <- function(sex, age, score) {
-          
-          if (sex == "Women and Men") {
-               adj <- 0.0024
-          }
-          else if (sex == "Men") {
-               adj <- 0.0034
-          }
-          else if (sex == "Women") {
-               adj <- 0.0017
-          }
-          else{
-               return(NA_real_)
-          }
-          
-          normpace <- (45 - age) * adj + score
-          normpct  <- pnorm((normpace-1)/0.13)*100
-          
-         return(normpct)
-     }
-  
-     # ---------- Base Plot only -----------------------------------------------
-     base_plot <- reactive({
-          req(input$sex_choice)
-          
-          switch(input$sex_choice,
-                 "Women" = women_plot,
-                 "Men"   = men_plot,
-                 "Women and Men" = people_plot,
-                 NULL # for "---Choose One---"
-                 )
-     })
-     
-     
-     # ----------  When button is pressed, calculate outputs -------------------
-     calc_event <- reactive({
-          req(calculated())
-          req(input$sex_choice != "---Choose One---")
-                    
-          list(
-               age   = input$age,
-               score = input$score,
-               pct   = calc_percentile(input$sex_choice, input$age, input$score)
-          )
-     })
+                ),
+                
+                mainPanel(
+                          plotlyOutput("norm_plot", height = "500px"),
+                          br(),
+                          div(
+                          style = "font-size: 18px; line-height: 1.4;",
+                          textOutput("percentile_text")
+                          )
+                )
+           )
+      )
+     # secure logon wrapper
+     ui <- shinymanager::secure_app(ui_defined, enable_admin = FALSE, timeout=15*60)
 
+     # ----------- APP SERVER-------------
+     server <- function(input, output, session) {
 
-     # ----------  Plot output with annotations --------------------------------
-     output$norm_plot <- renderPlotly({
-          p <- base_plot()
-          req(p)
+          # -------------  Christoph Add: secure components --------------
+          auth <- shinymanager::secure_server(
+            check_credentials = make_checker(credentials)
+            )
+            
+          # -------------  Calculated State Flag --------------
+          calculated <- reactiveVal(FALSE)
           
-          if (!calculated()){
-               return(p)    
+          # -------------- Arm the state on button click ---------
+          observeEvent(input$go, {
+              req(input$sex_choice != "---Choose One---")
+              calculated(TRUE)
+          })
+          
+          # ------------- Reset whenever inputs change ------------------
+          observeEvent(input$sex_choice, {
+              calculated(FALSE)
+              }, 
+              ignoreInit = TRUE)
+        
+          # -------------  Compute percentile -----------------
+          calc_percentile <- function(sex, age, score) {
+              
+              if (sex == "Women and Men") {
+                    adj <- 0.0024
+              }
+              else if (sex == "Men") {
+                    adj <- 0.0034
+              }
+              else if (sex == "Women") {
+                    adj <- 0.0017
+              }
+              else{
+                    return(NA_real_)
+              }
+              
+              normpace <- (45 - age) * adj + score
+              normpct  <- pnorm((normpace-1)/0.13)*100
+              
+              return(normpct)
           }
+        
+          # ---------- Base Plot only -----------------------------------------------
+          base_plot <- reactive({
+              req(input$sex_choice)
+              
+              switch(input$sex_choice,
+                      "Women" = women_plot,
+                      "Men"   = men_plot,
+                      "Women and Men" = people_plot,
+                      NULL # for "---Choose One---"
+                      )
+          })
           
-          res <- calc_event()
-
-          p |> layout(annotations = list(
-                        list(x = res$age, 
-                             y = res$score,
-                             text = ~paste0(
-                                        '<b></br>Your PACE Score: ', round(res$score, 2),
-                                        '</br>Percentile for Age: ', round(res$pct, 1), "%</b>"),
-                             bgcolor = "white",
-                             font = list(color = "black",
-                                         size = 14),
-                             showarrow  = TRUE,
-                             arrowcolor = "black",
-                             arrowsize  = 1.25,
-                             arrowhead = 7
+          
+          # ----------  When button is pressed, calculate outputs -------------------
+          calc_event <- reactive({
+              req(calculated())
+              req(input$sex_choice != "---Choose One---")
+                        
+              list(
+                    age   = input$age,
+                    score = input$score,
+                    pct   = calc_percentile(input$sex_choice, input$age, input$score)
+              )
+          })
+        
+        
+          # ----------  Plot output with annotations --------------------------------
+          output$norm_plot <- renderPlotly({
+              p <- base_plot()
+              req(p)
+              
+              if (!calculated()){
+                    return(p)    
+              }
+              
+              res <- calc_event()
+        
+              p |> layout(annotations = list(
+                            list(x = res$age, 
+                                  y = res$score,
+                                  text = ~paste0(
+                                            '<b></br>Your PACE Score: ', round(res$score, 2),
+                                            '</br>Percentile for Age: ', round(res$pct, 1), "%</b>"),
+                                  bgcolor = "white",
+                                  font = list(color = "black",
+                                              size = 14),
+                                  showarrow  = TRUE,
+                                  arrowcolor = "black",
+                                  arrowsize  = 1.25,
+                                  arrowhead = 7
+                            )
                         )
                     )
-               )
+              })
+        
+          # ----------  Text output with annotations --------------------------------
+          output$percentile_text <- renderText({
+              if (!calculated()) {
+                    return("")
+                    }
+                  
+              res <- calc_event()
+              sex <- tolower(input$sex_choice)
+              
+              pct1 <- 100 - res$pct
+              lcl  <- calc_percentile(input$sex_choice, res$age, res$score - 0.05)
+              ucl  <- calc_percentile(input$sex_choice, res$age, res$score + 0.05)
+        
+              ord_pct <- ifelse(round(res$pct) %in% c(11, 12, 13), "th",
+                          ifelse(round(res$pct) %% 10 == 1, "st",
+                          ifelse(round(res$pct) %% 10 == 2, "nd",
+                          ifelse(round(res$pct) %% 10 == 3, "rd", "th"))))
+              ord_lcl <- ifelse(round(lcl) %in% c(11, 12, 13), "th",
+                          ifelse(round(lcl) %% 10 == 1, "st",
+                          ifelse(round(lcl) %% 10 == 2, "nd",
+                          ifelse(round(lcl) %% 10 == 3, "rd", "th"))))
+              ord_ucl <- ifelse(round(ucl) %in% c(11, 12, 13), "th",
+                          ifelse(round(ucl) %% 10 == 1, "st",
+                          ifelse(round(ucl) %% 10 == 2, "nd",
+                          ifelse(round(ucl) %% 10 == 3, "rd", "th"))))
+              
+              glue(
+                    "Compared to other {sex} who are {res$age} years old, ",
+                    "your DunedinPACE aging score of {round(res$score, 2)} ",
+                    "is in the {round(res$pct)}{ord_pct} percentile. ",
+                    "This suggests that {round(res$pct)}% of {sex} your age ",
+                    "have slower aging scores and {round(pct1)}% have faster aging scores. ",
+                    "Given the reliability of the DunedinPACE measure, ",
+                    "we can be 95% confident that your aging score lies between ",
+                    "{round(res$score - 0.05, 2)} and {round(res$score + 0.05, 2)}, ",
+                    "which would correspond to the {round(lcl)}{ord_lcl} and {round(ucl)}{ord_ucl} percentiles ",
+                    "for {sex} your age. ",
+                    "There are methods that might be able to slow your aging, ",
+                    "including XXX and YYY. See [publication] to learn more."
+                    )
           })
-
-     # ----------  Text output with annotations --------------------------------
-     output$percentile_text <- renderText({
-          if (!calculated()) {
-               return("")
-               }
-             
-          res <- calc_event()
-          sex <- tolower(input$sex_choice)
-          
-          pct1 <- 100 - res$pct
-          lcl  <- calc_percentile(input$sex_choice, res$age, res$score - 0.05)
-          ucl  <- calc_percentile(input$sex_choice, res$age, res$score + 0.05)
-
-          ord_pct <- ifelse(round(res$pct) %in% c(11, 12, 13), "th",
-                     ifelse(round(res$pct) %% 10 == 1, "st",
-                     ifelse(round(res$pct) %% 10 == 2, "nd",
-                     ifelse(round(res$pct) %% 10 == 3, "rd", "th"))))
-          ord_lcl <- ifelse(round(lcl) %in% c(11, 12, 13), "th",
-                     ifelse(round(lcl) %% 10 == 1, "st",
-                     ifelse(round(lcl) %% 10 == 2, "nd",
-                     ifelse(round(lcl) %% 10 == 3, "rd", "th"))))
-          ord_ucl <- ifelse(round(ucl) %in% c(11, 12, 13), "th",
-                     ifelse(round(ucl) %% 10 == 1, "st",
-                     ifelse(round(ucl) %% 10 == 2, "nd",
-                     ifelse(round(ucl) %% 10 == 3, "rd", "th"))))
-          
-          glue(
-               "Compared to other {sex} who are {res$age} years old, ",
-               "your DunedinPACE aging score of {round(res$score, 2)} ",
-               "is in the {round(res$pct)}{ord_pct} percentile. ",
-               "This suggests that {round(res$pct)}% of {sex} your age ",
-               "have slower aging scores and {round(pct1)}% have faster aging scores. ",
-               "Given the reliability of the DunedinPACE measure, ",
-               "we can be 95% confident that your aging score lies between ",
-               "{round(res$score - 0.05, 2)} and {round(res$score + 0.05, 2)}, ",
-               "which would correspond to the {round(lcl)}{ord_lcl} and {round(ucl)}{ord_ucl} percentiles ",
-               "for {sex} your age. ",
-               "There are methods that might be able to slow your aging, ",
-               "including XXX and YYY. See [publication] to learn more."
-               )
-     })
+            
+        }
      
+     # ----------- RUN SHINY APP-------------
+     shinyApp(ui, server)
 }
-# ----------------- Run the app ------------------------------------------------
-shinyApp(ui = ui, server = server)
+
+
+DunedinPACE_app()
