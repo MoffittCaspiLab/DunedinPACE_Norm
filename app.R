@@ -1,7 +1,6 @@
 library(shiny)
 library(plotly)
-library(tidyverse)
-library(paletteer)
+library(tidyr)
 library(glue)
 library(shinythemes)
 library(bslib)
