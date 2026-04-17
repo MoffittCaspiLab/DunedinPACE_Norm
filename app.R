@@ -347,12 +347,10 @@ women_plot <- plot_ly(norms_wider, x = ~ages, y = ~pct100, type = 'scatter', mod
 
 # ------------------ Make our app a function -----------------------------
 DunedinPACE_app <- function(...){
-     # ----------- SUBMODULES-------------
-     source("R/app_login.R")
 
      # ----------- SOURCE SECURE UI BEHIND LOGON-------------
      # UI Definition
-     ui_defined <- fluidPage(
+     ui <- fluidPage(
           theme = shinytheme("sandstone"),
           titlePanel("DunedinPACE Normed Scores"),
           
@@ -376,16 +374,9 @@ DunedinPACE_app <- function(...){
                 )
            )
       )
-     # secure logon wrapper
-     ui <- shinymanager::secure_app(ui_defined, enable_admin = FALSE, timeout=15*60)
-
      # ----------- APP SERVER-------------
      server <- function(input, output, session) {
 
-          # -------------  Christoph Add: secure components --------------
-          auth <- shinymanager::secure_server(
-            check_credentials = make_checker(credentials)
-            )
             
           # -------------  Calculated State Flag --------------
           calculated <- reactiveVal(FALSE)
@@ -515,9 +506,7 @@ DunedinPACE_app <- function(...){
                     "we can be 95% confident that your aging score lies between ",
                     "{round(res$score - 0.05, 2)} and {round(res$score + 0.05, 2)}, ",
                     "which would correspond to the {round(lcl)}{ord_lcl} and {round(ucl)}{ord_ucl} percentiles ",
-                    "for {sex} your age. ",
-                    "There are methods that might be able to slow your aging, ",
-                    "including XXX and YYY. See [publication] to learn more."
+                    "for {sex} your age. "
                     )
           })
             
